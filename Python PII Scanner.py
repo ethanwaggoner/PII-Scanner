@@ -2,374 +2,259 @@ from tkinter import filedialog
 import tkinter as tk
 from tkinter import ttk
 from tkdatacanvas import DataCanvas
+from tkinter import scrolledtext
 import os.path
 from os import path
-import re
-import docx2txt
-import PyPDF2
-import pandas as pd
 import csv
 import io
 import datetime
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
-
-win = tk.Tk()
-win.title("PII Scanner")
-
-Scan_path = tk.StringVar()
-Output_path = tk.StringVar()
-Now = datetime.datetime.now()
-CurrentDate = Now.strftime("%Y-%m-%d-%H-%M")
-OutputDirectory = str(Output_path.get())
-Outputlocation = OutputDirectory + CurrentDate + ".csv"
-
-def Analytics():
-    File = pd.read_csv(Outputlocation)
-    PIIColumn = File['PII Type'].tolist()
-    SSCount = PIIColumn.count("Social Security Number")
-    CCCount = PIIColumn.count("Credit Card Number")
-    PPCount = PIIColumn.count("Passport ID")
-    DriversCount = PIIColumn.count("Drivers License")
-
-    figure2 = Figure(figsize=(4, 4), dpi=70)
-    pie2 = FigureCanvasTkAgg(figure2, master=win)
-    pie2.get_tk_widget().grid(column=11, row=5)
-
-    subplot2 = figure2.add_subplot(111)
-    labels2 = ['Social Security Numbers', 'CreditCard Numbers', 'Passport ID Numbers', 'Drivers Licenses MD']
-    pieSizes = [SSCount, CCCount, PPCount, DriversCount]
-    subplot2.pie(pieSizes, autopct='%1.1f%%', shadow=True, startangle=90, radius=2)
-    subplot2.legend(labels2)
-    subplot2.axis('equal')
-    subplot2.set_title("PII Frequency")
-
-    PIITotal = SSCount + CCCount + PPCount + DriversCount
-    MetaData = CurrentDate + ": " + str(PIITotal)
-    TXTPath = OutputDirectory + "Data.txt"
-    with open(TXTPath, 'a') as outputfile:
-        outputfile.write(MetaData + '\n')
-    with open(TXTPath, 'r') as outputfile2:
-        MetaLines = [line.rstrip() for line in outputfile2]
-    DateList = []
-    CountList = []
-    for line in MetaLines:
-        MetaList = line.split(": ")
-        Date = MetaList[0]
-        Count = MetaList[1]
-        DateList.extend(Date)
-        CountList.extend(Count)
+import glob
+from piiPatternMatching import *
+from fileTypes import *
 
 
-def Output(PII, Location):
+class PiiScanner:
 
-    PIIlist = []
-    Locationlist = []
-    PIIlist.append(PII)
-    Locationlist.append(Location)
-    df = pd.DataFrame(data={"PII Type": PIIlist, "File Path": Locationlist})
-    if os.path.isfile(Outputlocation) == True:
-        df.to_csv(Outputlocation, sep=',', index=False, mode='a', header=False)
-    else:
-        df.to_csv(Outputlocation, sep=',', index=False)
+    # Initializes variables and the GUI
+    def __init__(self, master):
+        self.scanPath = tk.StringVar()
+        self.outputPath = tk.StringVar()
+        self.Now = datetime.datetime.now()
+        self.currentDate = self.Now.strftime("%Y-%m-%d-%H-%M")
+        self.outputDirectory = str(self.outputPath.get())
+        self.outputLocation = self.outputDirectory + "/" + self.currentDate + ".csv"
 
+        self.master = master
+        self.master.title("PII Scanner")
 
-def SSN(Data):
-    if re.search(r"""\b\d{3}\-\d{2}\-\d{4}\b|\b\d{3}\s\d{2}\s\d{4}\b|Social Security Number (\b\d{9}\b)
-                     |\b\d{3}\-\d{6}\b|\b\d{5}\-{4}\b""", Data):
-        Type = "Social Security Number"
-        Output(Type, str(filePath))
+        self.wordVar = tk.IntVar()
+        self.excelVar = tk.IntVar()
+        self.textVar = tk.IntVar()
+        self.pdfVar = tk.IntVar()
 
+        self.ssnVar = tk.IntVar()
+        self.ccVar = tk.IntVar()
+        self.driversVar = tk.IntVar()
 
-def CC(Data):
-    if re.search(r"\b\d{4}\s\d{4}\s\d{4}\s\d{4}\s\b|\b\d{16}\b|\b\d{4}\-\d{4}\-\d{4}\-\d{4}\b", Data):
-        Type = "Credit Card Number"
-        Output(Type, str(filePath))
+        self.console = scrolledtext.ScrolledText(self.master, state="normal", wrap=tk.WORD, width=120, height=10)
+        self.runButton = ttk.Button(self.master, text="Run", command=self.run)
+        self.filePath1 = ttk.Entry(self.master, width=45, textvariable=self.scanPath)
+        self.filePath2 = ttk.Entry(self.master, width=45, textvariable=self.outputPath)
+        self.scanLabel = ttk.Label(self.master, text="Select a path to scan: ")
+        self.outputPathLabel = ttk.Label(self.master, text="Select an output path: ")
+        self.Browse1 = ttk.Button(self.master, text="Browse", command=self.scan_explorer)
+        self.Browse2 = ttk.Button(self.master, text="Browse", command=self.output_explorer)
+        self.errorLabel1 = ttk.Label(self.master, text="")
+        self.errorLabel2 = ttk.Label(self.master, text="")
+        self.fileTypesFrame = ttk.LabelFrame(self.master, text='File Types to be Scanned')
+        self.dc = DataCanvas(self.master)
+        self.piiErrorLabel = ttk.Label(self.master, text="")
+        self.fileErrorLabel = ttk.Label(self.master, text="")
+        self.piiTypesFrame = ttk.LabelFrame(self.master, text="PII Types")
+        self.dc = DataCanvas(self.master)
 
-def PP(Data):
-    if re.search(r"""Passport ID C(\w{8}\b|c\w{8}\b)|Passport Identification Number C(\w{8}\b|c\w{8}\b)|
-                     Passport ID (\w{6,9}\b)|Passport Identification Number (\w{6,9}\b)""", Data):
-        Type = "Passport ID"
-        Output(Type, str(filePath))
+        self.wordButton = tk.Checkbutton(self.fileTypesFrame, text="Word Documents", variable=self.wordVar)
+        self.excelButton = tk.Checkbutton(self.fileTypesFrame, text="Excel Sheets", variable=self.excelVar)
+        self.textButton = tk.Checkbutton(self.fileTypesFrame, text="Text Documents", variable=self.textVar)
+        self.pdfButton = tk.Checkbutton(self.fileTypesFrame, text="PDFs", variable=self.pdfVar)
+        self.ssnButton = tk.Checkbutton(self.piiTypesFrame, text="Social Security Numbers", variable=self.ssnVar)
+        self.ccButton = tk.Checkbutton(self.piiTypesFrame, text="CreditCard Numbers", variable=self.ccVar)
+        self.driversButton = tk.Checkbutton(self.piiTypesFrame, text="Drivers Licenses MD", variable=self.driversVar)
 
+        self.wordButton.deselect()
+        self.excelButton.deselect()
+        self.textButton.deselect()
+        self.pdfButton.deselect()
+        self.ssnButton.deselect()
+        self.ccButton.deselect()
+        self.driversButton.deselect()
 
-def DriversMD(Data):
-    if re.search(r"\b[a-zA-Z]\d{12}\b|\b[a-zA-z]\-\d{3}\-\d{3}\-\d{3}\-\d{3}\b", Data):
-        Type = "Drivers License"
-        Output(Type, str(filePath))
+        self.fileTypesFrame.grid(column=0, row=5, padx=20, sticky=tk.W)
+        self.piiTypesFrame.grid(column=1, row=5, sticky=tk.NW)
 
+        self.console.grid(column=0, row=7, columnspan=20, pady=10, padx=20)
+        self.filePath1.grid(column=1, row=1, sticky=tk.W)
+        self.filePath2.grid(column=1, row=2, sticky=tk.W)
+        self.scanLabel.grid(column=0, row=1, padx=20, sticky=tk.W)
+        self.outputPathLabel.grid(column=0, row=2, padx=20, sticky=tk.W)
+        self.Browse1.grid(column=2, row=1)
+        self.Browse2.grid(column=2, row=2)
+        self.runButton.grid(column=20, row=20)
+        self.errorLabel1.grid(column=4, row=1)
+        self.errorLabel2.grid(column=4, row=2)
+        self.fileErrorLabel.grid(column=0, row=4, sticky=tk.SW, pady=10)
+        self.piiErrorLabel.grid(column=1, row=4, sticky=tk.SW, pady=10)
+        self.dc.grid(column=0, row=6, columnspan=2, pady=10, padx=20, sticky=tk.W)
+        self.wordButton.grid(column=0, row=0, sticky=tk.W)
+        self.excelButton.grid(column=0, row=1, sticky=tk.W)
+        self.textButton.grid(column=0, row=2, sticky=tk.W)
+        self.pdfButton.grid(column=0, row=3, sticky=tk.W)
+        self.ssnButton.grid(column=0, row=0, sticky=tk.W)
+        self.ccButton.grid(column=0, row=1, sticky=tk.W)
+        self.driversButton.grid(column=0, row=3, sticky=tk.W)
 
-def Word(Directory):
-    print(Directory)
-    try:
-        File = docx2txt.process(Directory)
-        if SSNvar.get() == 1:
-            SSN(File)
-        if CCvar.get() == 1:
-            CC(File)
-        if PPvar.get() == 1:
-            PP(File)
-        if Driversvar.get() == 1:
-            DriversMD(File)
-    except:
-        pass
+    # Executes when the "browse" button is clicked by the user next to the scan box. Opens a file explorer window
+    def scan_explorer(self):
+        directory = filedialog.askdirectory(parent=win, initialdir="C:\\",
+                                            title="File Explorer")
+        self.scanPath.set(directory)
+        folder1 = self.scanPath.get()
+        self.filePath1.delete(0, tk.END)
+        self.filePath1.insert(tk.END, folder1)
+        self.errorLabel1.configure(text="")
 
+    # Executes when the "browse" button is clicked by the user next to the output box. Opens a file explorer window
+    def output_explorer(self):
+        directory = filedialog.askdirectory(parent=win, initialdir="C:\\",
+                                            title="File Explorer")
+        self.outputPath.set(directory)
+        folder2 = self.outputPath.get()
+        self.filePath2.delete(0, tk.END)
+        self.filePath2.insert(tk.END, folder2)
+        self.errorLabel2.configure(text="")
+        self.outputDirectory = str(self.outputPath.get())
+        self.outputLocation = self.outputDirectory + "/" + self.currentDate + ".csv"
 
-def CSV(Directory):
-    print(Directory)
-    try:
-        Data = str(pd.read_csv(Directory))
-        if SSNvar.get() == 1:
-            SSN(Data)
-        if CCvar.get() == 1:
-            CC(Data)
-        if PPvar.get() == 1:
-            PP(Data)
-        if Driversvar.get() == 1:
-            DriversMD(Data)
-    except:
-        pass
+    # Processes Social Security Numbers from the data and prepares the data for output
+    def ssn_process(self, data, filename):
+        ssn_pii = ssn(str(data))
+        for pii in ssn_pii:
+            pii_type = "Social Security Number"
+            self.output(pii_type, filename, pii)
 
+    # Processes Credit Cards from the data and prepares the data for output
+    def cc_process(self, data, filename):
+        cc_pii = cc(str(data))
+        for pii in cc_pii:
+            pii_type = "Credit Card Number"
+            self.output(pii_type, filename, pii)
 
-def Excel(Directory):
-    print(Directory)
-    try:
-        spreadsheet = pd.ExcelFile(Directory)
-        for sheet in spreadsheet.sheet_names:
-            Data = str(spreadsheet.parse(sheet))
-            if SSNvar.get() == 1:
-                SSN(Data)
-            if CCvar.get() == 1:
-                CC(Data)
-            if PPvar.get() == 1:
-                PP(Data)
-            if Driversvar.get() == 1:
-                DriversMD(Data)
-    except:
-        pass
+    # Processes Drivers License IDs from the data and prepares the data for output
+    def drivers_process(self, data, filename):
+        drivers_pii = drivers_md(str(data))
+        for pii in drivers_pii:
+            pii_type = "Drivers License MD"
+            self.output(pii_type, filename, pii)
 
-
-def Text(Directory):
-    print(Directory)
-    try:
-        with open(Directory, mode='r') as f:
-            for line in f:
-                if SSNvar.get() == 1:
-                    SSN(line)
-                if CCvar.get() == 1:
-                    CC(line)
-                if PPvar.get() == 1:
-                    PP(line)
-                if Driversvar.get() == 1:
-                    DriversMD(line)
-    except:
-        pass
-
-def PDF(Directory):
-    print(Directory)
-    try:
-        with open(Directory, mode='rb') as file:
-            reader = PyPDF2.PdfFileReader(file)
-            for page in reader.pages:
-                PDFText = page.extractText()
-                if SSNvar.get() == 1:
-                    SSN(PDFText)
-                if CCvar.get() == 1:
-                    CC(PDFText)
-                if PPvar.get() == 1:
-                    PP(PDFText)
-    except:
-        pass
-
-
-
-def File_sort(extensions):
-    path = Scan_path.get()
-    for root, directories, filenames in os.walk(path):
-        for filename in filenames:
-                global filePath
-                filePath = os.path.join(root,filename)
-                #print(filePath)
-                for ext in extensions:
-                    if filePath.endswith(ext):
-                        if filePath.endswith(".docx") or filePath.endswith(".doc"):
-                            Word(filePath)
-                        elif filePath.endswith(".xlsx") or filePath.endswith(".xlx"):
-                            Excel(filePath)
-                        elif filePath.endswith(".pdf"):
-                            PDF(filePath)
-                        elif filePath.endswith(".txt"):
-                            Text(filePath)
-                        elif filePath.endswith(".csv"):
-                            CSV(filePath)
-
-
-def Scan_explorer():                                                                                                    #Opens a file explorer for the path to be scanned
-    directory = filedialog.askdirectory(parent=win, initialdir="C:\\", title="File Explorer")                           #Opens the file explorer window
-    Scan_path.set(directory)                                                                                            #Assigns the path to a variable
-    folder1 = Scan_path.get()                                                                                           #Pulls the path from the variable
-    file_path1.delete(0, tk.END)                                                                                        #Deletes previous input
-    file_path1.insert(tk.END, folder1)                                                                                  #Inserts the path into the textbox
-    Error_label1.configure(text="")
-
-
-def Output_explorer():                                                                                                  #Opens a file explorer for the output path
-    directory = filedialog.askdirectory(parent=win, initialdir="C:\\", title="File Explorer")                           #Opens the file explorer window
-    Output_path.set(directory)                                                                                          #Assigns the path to a variable
-    folder2 = Output_path.get()                                                                                         #Pulls the path from the variable
-    file_path2.delete(0, tk.END)                                                                                        #Deletes previous input
-    file_path2.insert(tk.END, folder2)                                                                                  #Inserts the path into the textbox
-    Error_label2.configure(text="")
-
-
-def Run():
-    pd.options.display.max_columns = None
-    pd.options.display.max_rows = None
-
-    if path.exists(Scan_path.get()):
-        Error_label1.configure(text="")
-    else:
-        Error_label1.configure(text="Path does not exist")
-        Run_button.configure(state='normal')
-
-    if path.exists(Output_path.get()):
-        Error_label2.configure(text="")
-    else:
-        Error_label2.configure(text="Path does not exist")
-        Run_button.configure(state='normal')
-
-    file_select_count = Wordvar.get() + Excelvar.get() + Textvar.get() + PDFvar.get()
-    pii_select_count = SSNvar.get() + CCvar.get() + PPvar.get()
-
-    if file_select_count == 0:
-        File_error_label.configure(text="Please make a selection")
-    else:
-        File_error_label.configure(text="")
-
-    if pii_select_count == 0:
-        PII_error_label.configure(text="Please make a selection")
-    else:
-        PII_error_label.configure(text="")
-
-    if path.exists(Scan_path.get()) and path.exists(Output_path.get()) and file_select_count > 0 and pii_select_count > 0:
-
-        Filelist = []
-        if Wordvar.get() == 1:
-            Filelist.append(".docx")
-            Filelist.append(".doc")
-        if Excelvar.get() == 1:
-            Filelist.append(".csv")
-            Filelist.append(".xlsx")
-            Filelist.append(".xlx")
-        if Textvar.get() == 1:
-            Filelist.append(".txt")
-        if PDFvar.get() == 1:
-            Filelist.append(".pdf")
-        File_sort(Filelist)
-
-        with io.open(Outputlocation, "r", newline="") as csv_file:
+    # Populates the Output table with the data exported to the csv file
+    def output_table(self):
+        with io.open(self.outputLocation, "r", newline="") as csv_file:
             reader = csv.reader(csv_file)
             parsed_rows = 0
             for row in reader:
                 if parsed_rows == 0:
-                    dc.add_header(*row)
+                    self.dc.add_header(*row)
                 else:
-                    dc.add_row(*row)
+                    self.dc.add_row(*row)
                 parsed_rows += 1
-        dc.display()
-        Run_button.configure(state='disabled', text="Finished")
-    else:
-        Run_button.configure(state='normal', text="Run")
+            self.dc.display()
 
-    Analytics()
+    # Checks if all needed parameters are present and displays errors if they are not
+    def input_sanitation(self):
+        file_select_count = self.wordVar.get() + self.excelVar.get() + self.textVar.get() + self.pdfVar.get()
+        pii_select_count = self.ssnVar.get() + self.ccVar.get()
+
+        if path.exists(self.scanPath.get()):
+            self.errorLabel1.configure(text="")
+        else:
+            self.errorLabel1.configure(text="Path does not exist")
+            self.runButton.configure(state='normal')
+            return False
+
+        if path.exists(self.outputPath.get()):
+            self.errorLabel2.configure(text="")
+        else:
+            self.errorLabel2.configure(text="Path does not exist")
+            self.runButton.configure(state='normal')
+            return False
+
+        if file_select_count == 0:
+            self.fileErrorLabel.configure(text="Please make a selection")
+            return False
+        else:
+            self.fileErrorLabel.configure(text="")
+
+        if pii_select_count == 0:
+            self.fileErrorLabel.configure(text="Please make a selection")
+            return False
+        else:
+            self.fileErrorLabel.configure(text="")
+        return True
+
+    # Prepares the data to be exported via CSV
+    def output(self, pii_type, location, pii):
+        pii_list = []
+        pii_type_list = []
+        location_list = []
+        pii_type_list.append(pii_type)
+        location_list.append(location)
+        pii_list.append(pii)
+        df = pd.DataFrame(data={"PII Type": pii_type_list, "File Path": location_list, "PII": pii_list})
+        if os.path.isfile(self.outputLocation):
+            df.to_csv(self.outputLocation, sep=',', index=False, mode='a', header=False)
+        else:
+            df.to_csv(self.outputLocation, sep=',', index=False)
+
+    # Updates the live console. (this is what makes it live)
+    def console_update(self, filename):
+        self.console.insert(tk.END, filename + "\n")
+        self.console.yview(tk.END)
+        self.master.update()
+
+    # Executes when the user clicks the "run" button. Acts as main
+    def run(self):
+        data = ""
+        scan_path = self.scanPath.get()
+        pd.options.display.max_columns = None
+        pd.options.display.max_rows = None
+
+        if self.input_sanitation():
+            for filename in glob.iglob(scan_path + '/**', recursive=True):
+                is_extension = False
+                if filename != self.outputLocation:
+                    if self.wordVar.get() == 1 and filename.endswith(".docx") or filename.endswith(".doc"):
+                        self.console_update(filename)
+                        data = word_sort(filename)
+                        is_extension = True
+
+                    elif self.excelVar.get() == 1 and filename.endswith(".xlsx") or filename.endswith(".xlx"):
+                        self.console_update(filename)
+                        data = excel_sort(filename)
+                        is_extension = True
+
+                    elif self.pdfVar.get() == 1 and filename.endswith(".pdf"):
+                        self.console_update(filename)
+                        data = pdf_sort(filename)
+                        is_extension = True
+
+                    elif self.textVar.get() == 1 and filename.endswith(".txt"):
+                        self.console_update(filename)
+                        data = text_sort(filename)
+                        is_extension = True
+
+                    elif self.excelVar.get() == 1 and filename.endswith(".csv"):
+                        self.console_update(filename)
+                        data = csv_sort(filename)
+                        is_extension = True
+
+                if is_extension:
+
+                    if self.ssnVar.get() == 1:
+                        self.ssn_process(data, filename)
+
+                    if self.ccVar.get() == 1:
+                        self.cc_process(data, filename)
+
+                    if self.driversVar.get() == 1:
+                        self.drivers_process(data, filename)
+
+            self.output_table()
+            self.runButton.configure(state='disabled', text="Finished")
+        else:
+            self.runButton.configure(state='normal', text="Run")
 
 
-file_path1 = ttk.Entry(win, width=45, textvariable=Scan_path)                                                           #Entry box for the path to scan
-file_path1.grid(column=1, row=1)
-
-file_path2 = ttk.Entry(win, width=45, textvariable=Output_path)                                                         #Entry box for the output path
-file_path2.grid(column=1, row=2)
-
-Scan_label = ttk.Label(win, text="Select a path to scan: ")                                                             #Label for the scan path
-Scan_label.grid(column=0, row=1)
-
-Output_path_label = ttk.Label(win, text="Select an output path: ")                                                      #Label for the output path
-Output_path_label.grid(column=0, row=2)
-
-Browse1 = ttk.Button(win, text="Browse", command=Scan_explorer)                                                         #Browse button for the path to scan
-Browse1.grid(column=2, row=1)
-
-Browse2 = ttk.Button(win, text="Browse", command=Output_explorer)                                                       #Browse button for the output path
-Browse2.grid(column=2, row=2)
-
-Run_button = ttk.Button(win, text="Run", command=Run)
-Run_button.grid(column=20, row=20)
-
-Error_label1 = ttk.Label(win, text="")
-Error_label1.grid(column=4, row=1)
-
-Error_label2 = ttk.Label(win, text="")
-Error_label2.grid(column=4, row=2)
-
-File_types_frame = ttk.LabelFrame(win, text='File Types to be Scanned')
-File_types_frame.grid(column=0, row=5, sticky=tk.N)
-
-Wordvar = tk.IntVar()
-Wordbutton = tk.Checkbutton(File_types_frame, text="Word Documents", variable=Wordvar)
-Wordbutton.deselect()
-Wordbutton.grid(column=0, row=0, sticky=tk.W)
-
-Excelvar = tk.IntVar()
-Excelbutton = tk.Checkbutton(File_types_frame, text="Excel Sheets", variable=Excelvar)
-Excelbutton.deselect()
-Excelbutton.grid(column=0, row=1, sticky=tk.W)
-
-Textvar = tk.IntVar()
-Textbutton = tk.Checkbutton(File_types_frame, text="Text Documents", variable=Textvar)
-Textbutton.deselect()
-Textbutton.grid(column=0, row=2, sticky=tk.W)
-
-PDFvar = tk.IntVar()
-PDFbutton = tk.Checkbutton(File_types_frame, text="PDFs", variable=PDFvar)
-PDFbutton.deselect()
-PDFbutton.grid(column=0, row=3, sticky=tk.W)
-
-PII_types_frame = ttk.LabelFrame(win, text="PII Types")
-PII_types_frame.grid(column=1, row=5, sticky=tk.NW)
-
-SSNvar = tk.IntVar()
-SSNbutton = tk.Checkbutton(PII_types_frame, text="Social Security Numbers", variable=SSNvar)
-SSNbutton.deselect()
-SSNbutton.grid(column=0, row=0, sticky=tk.W)
-
-CCvar = tk.IntVar()
-CCbutton = tk.Checkbutton(PII_types_frame, text="CreditCard Numbers", variable=CCvar)
-CCbutton.deselect()
-CCbutton.grid(column=0, row=1, sticky=tk.W)
-
-PPvar = tk.IntVar()
-PPbutton = tk.Checkbutton(PII_types_frame, text="Passport ID Numbers", variable=PPvar)
-PPbutton.deselect()
-PPbutton.grid(column=0, row=2, sticky=tk.W)
-
-Driversvar = tk.IntVar()
-Driversbutton = tk.Checkbutton(PII_types_frame, text="Drivers Licenses MD", variable=Driversvar)
-Driversbutton.deselect()
-Driversbutton.grid(column=0, row=3, sticky=tk.W)
-
-File_error_label = ttk.Label(win, text="")
-File_error_label.grid(column=0, row=4, sticky=tk.SW, pady=10)
-
-PII_error_label = ttk.Label(win, text="")
-PII_error_label.grid(column=1, row=4, sticky=tk.SW, pady=10)
-
-
-dc = DataCanvas(win)
-dc.grid(column=10, row=5)
-
+win = tk.Tk()
+gui = PiiScanner(win)
 win.mainloop()
-
-
-
-
 
