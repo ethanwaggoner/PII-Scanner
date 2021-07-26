@@ -40,8 +40,14 @@ def ssn(data):
 # Runs regex against the data looking for Credit Card Numbers
 def cc(data):
     pii_list = re.findall(r"\b\d{4}\s\d{4}\s\d{4}\s\d{4}\b|\b\d{16}\b|\b\d{4}-\d{4}-\d{4}-\d{4}\b", data)
+    pii_clean = []
+    for pii in pii_list:
+        pii = pii.replace("-", "")
+        pii = pii.replace(" ", "")
+        if luhn(pii):
+            pii_clean.append(pii)
 
-    return censor(pii_list)
+    return censor(pii_clean)
 
 
 # Runs regex against the data looking for Maryland Drivers License IDs
