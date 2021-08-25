@@ -17,7 +17,7 @@ def word_sort(directory):
 def csv_sort(directory):
     print(directory)
     try:
-        data = str(pd.read_csv(directory))
+        data = str(pd.read_csv(directory, encoding="latin1"))
         return data
     except:
         print("Error retrieving data")
@@ -42,7 +42,7 @@ def text_sort(directory):
     print(directory)
     try:
         data_list = []
-        with open(directory, mode='r') as f:
+        with open(directory, mode='r', encoding="latin-1") as f:
             for line in f:
                 data_list.append(line)
             return data_list
@@ -64,3 +64,4 @@ def pdf_sort(directory):
             return data_list
     except:
         print("Error retrieving data")
+

@@ -12,8 +12,8 @@ from piiPatternMatching import *
 from fileTypes import *
 
 
-class PiiScanner:
-
+# noinspection PyTypeChecker
+class Main:
     # Initializes variables and the GUI
     def __init__(self, master):
         self.scanPath = tk.StringVar()
@@ -136,21 +136,22 @@ class PiiScanner:
 
     # Populates the Output table with the data exported to the csv file
     def output_table(self):
-        with io.open(self.outputLocation, "r", newline="") as csv_file:
-            reader = csv.reader(csv_file)
-            parsed_rows = 0
-            for row in reader:
-                if parsed_rows == 0:
-                    self.dc.add_header(*row)
-                else:
-                    self.dc.add_row(*row)
-                parsed_rows += 1
-            self.dc.display()
+        if path.isfile(self.outputLocation):
+            with io.open(self.outputLocation, "r", newline="") as csv_file:
+                reader = csv.reader(csv_file)
+                parsed_rows = 0
+                for row in reader:
+                    if parsed_rows == 0:
+                        self.dc.add_header(*row)
+                    else:
+                        self.dc.add_row(*row)
+                    parsed_rows += 1
+                self.dc.display()
 
     # Checks if all needed parameters are present and displays errors if they are not
     def input_sanitation(self):
         file_select_count = self.wordVar.get() + self.excelVar.get() + self.textVar.get() + self.pdfVar.get()
-        pii_select_count = self.ssnVar.get() + self.ccVar.get()
+        pii_select_count = self.ssnVar.get() + self.ccVar.get() + self.driversVar.get()
 
         if path.exists(self.scanPath.get()):
             self.errorLabel1.configure(text="")
@@ -180,6 +181,7 @@ class PiiScanner:
         return True
 
     # Prepares the data to be exported via CSV
+    # noinspection PyTypeChecker
     def output(self, pii_type, location, pii):
         pii_list = []
         pii_type_list = []
@@ -209,31 +211,30 @@ class PiiScanner:
         if self.input_sanitation():
             for filename in glob.iglob(scan_path + '/**', recursive=True):
                 is_extension = False
-                if filename != self.outputLocation:
-                    if self.wordVar.get() == 1 and filename.endswith(".docx") or filename.endswith(".doc"):
-                        self.console_update(filename)
-                        data = word_sort(filename)
-                        is_extension = True
+                if self.wordVar.get() == 1 and (filename.endswith(".docx") or filename.endswith(".doc")):
+                    self.console_update(filename)
+                    data = word_sort(filename)
+                    is_extension = True
 
-                    elif self.excelVar.get() == 1 and filename.endswith(".xlsx") or filename.endswith(".xlx"):
-                        self.console_update(filename)
-                        data = excel_sort(filename)
-                        is_extension = True
+                elif self.excelVar.get() == 1 and (filename.endswith(".xlsx") or filename.endswith(".xlx")):
+                    self.console_update(filename)
+                    data = excel_sort(filename)
+                    is_extension = True
 
-                    elif self.pdfVar.get() == 1 and filename.endswith(".pdf"):
-                        self.console_update(filename)
-                        data = pdf_sort(filename)
-                        is_extension = True
+                elif self.pdfVar.get() == 1 and filename.endswith(".pdf"):
+                    self.console_update(filename)
+                    data = pdf_sort(filename)
+                    is_extension = True
 
-                    elif self.textVar.get() == 1 and filename.endswith(".txt"):
-                        self.console_update(filename)
-                        data = text_sort(filename)
-                        is_extension = True
+                elif self.textVar.get() == 1 and filename.endswith(".txt"):
+                    self.console_update(filename)
+                    data = text_sort(filename)
+                    is_extension = True
 
-                    elif self.excelVar.get() == 1 and filename.endswith(".csv"):
-                        self.console_update(filename)
-                        data = csv_sort(filename)
-                        is_extension = True
+                elif self.excelVar.get() == 1 and filename.endswith(".csv"):
+                    self.console_update(filename)
+                    data = csv_sort(filename)
+                    is_extension = True
 
                 if is_extension:
 
@@ -253,6 +254,6 @@ class PiiScanner:
 
 
 win = tk.Tk()
-gui = PiiScanner(win)
+gui = Main(win)
 win.mainloop()
 
